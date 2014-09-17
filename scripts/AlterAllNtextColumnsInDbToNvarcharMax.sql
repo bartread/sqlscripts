@@ -3,6 +3,7 @@ GO
 
 SET NOCOUNT ON;
 
+-- Set this to 0 to actually run commands, 1 to only print them.
 DECLARE @printCommandsOnly BIT = 1;
 
 -- Migrate columns NTEXT -> NVARCHAR(MAX)
