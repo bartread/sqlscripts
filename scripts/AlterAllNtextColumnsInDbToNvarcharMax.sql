@@ -1,45 +1,115 @@
-USE DemoDataCoData
+USE _YOUR_DATABASE_NAME_
 GO
+
+SET NOCOUNT ON;
+
+DECLARE @printCommandsOnly BIT = 1;
 
 -- Migrate columns NTEXT -> NVARCHAR(MAX)
 
-DECLARE @alterColumns NVARCHAR(MAX) = '';
-SELECT  @alterColumns = @alterColumns
-	+'ALTER TABLE '
-	+ QUOTENAME(OBJECT_SCHEMA_NAME(c.object_id)) + '.' + QUOTENAME(OBJECT_NAME(c.object_id))
-	+ ' ALTER COLUMN '
-	+ QUOTENAME(c.Name)
-	+' NVARCHAR(MAX) '
-	+ CASE WHEN c.is_nullable = 1 THEN 'NOT' ELSE '' END + ' NULL;'
-	+ CHAR(13)
-	+ 'UPDATE '
-	+ QUOTENAME(OBJECT_SCHEMA_NAME(c.object_id)) + '.' + QUOTENAME(OBJECT_NAME(c.object_id))
-	+ ' SET '
-	+ QUOTENAME(c.Name)
-	+ ' = '
-	+ QUOTENAME(c.Name)
-	+ ';' + CHAR(13) + CHAR(13)
-FROM    sys.columns AS c
-INNER JOIN sys.objects AS o
-ON c.object_id = o.object_id
-WHERE   o.type = 'U' AND c.system_type_id = 99; --NTEXT
+DECLARE @object_id INT,
+		@columnName SYSNAME,
+		@isNullable BIT;
 
-PRINT @alterColumns;
+DECLARE @command NVARCHAR(MAX);
 
-EXECUTE sp_executesql @alterColumns;
-GO
+DECLARE @ntextColumnInfo TABLE (
+	object_id INT,
+	ColumnName SYSNAME,
+	IsNullable BIT
+);
 
--- Update VIEW metadata
+INSERT INTO @ntextColumnInfo ( object_id, ColumnName, IsNullable )
+	SELECT  c.object_id, c.name, c.is_nullable
+	FROM    sys.columns AS c
+	INNER JOIN sys.objects AS o
+	ON c.object_id = o.object_id
+	WHERE   o.type = 'U' AND c.system_type_id = 99;
 
-DECLARE @updateViews NVARCHAR(MAX) = '';
-SELECT @updateViews = @updateViews
-	+ 'EXECUTE sp_refreshview '''
-	+ QUOTENAME(OBJECT_SCHEMA_NAME(o.object_id)) + '.' + QUOTENAME(OBJECT_NAME(o.object_id))
-	+ ''';' + CHAR(13)
-FROM sys.objects AS o
-WHERE o.type = 'V'
+DECLARE col_cursor CURSOR FAST_FORWARD FOR
+	SELECT object_id, ColumnName, IsNullable FROM @ntextColumnInfo;
 
-PRINT @updateViews;
+OPEN col_cursor;
+FETCH NEXT FROM col_cursor INTO @object_id, @columnName, @isNullable;
 
-EXECUTE sp_executesql @updateViews;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	SELECT @command =
+		'ALTER TABLE '
+		+ QUOTENAME(OBJECT_SCHEMA_NAME(@object_id))
+			+ '.' + QUOTENAME(OBJECT_NAME(@object_id))
+		+ ' ALTER COLUMN '
+		+ QUOTENAME(@columnName)
+		+' NVARCHAR(MAX) '
+		+ CASE
+			WHEN @isNullable = 1 THEN ''
+			ELSE 'NOT'
+		  END
+		+ ' NULL;';
+		
+	PRINT @command;
+	IF @printCommandsOnly = 0
+	BEGIN
+		EXECUTE sp_executesql @command;
+	END
+
+	SELECT @command =
+		'UPDATE '
+		+ QUOTENAME(OBJECT_SCHEMA_NAME(@object_id))
+			+ '.' + QUOTENAME(OBJECT_NAME(@object_id))
+		+ ' SET '
+		+ QUOTENAME(@columnName)
+		+ ' = '
+		+ QUOTENAME(@columnName)
+		+ ';'
+
+	PRINT @command;
+	IF @printCommandsOnly = 0
+	BEGIN
+		EXECUTE sp_executesql @command;
+	END
+
+	FETCH NEXT FROM col_cursor INTO @object_id, @columnName, @isNullable;
+END
+
+CLOSE col_cursor;
+DEALLOCATE col_cursor;
+
+-- Now refresh the view metadata for all the views in the database
+-- (We may not need to do them all but it won't hurt.)
+
+DECLARE @viewObjectIds TABLE (
+	object_id INT
+);
+
+INSERT INTO @viewObjectIds
+	SELECT o.object_id
+	FROM sys.objects AS o
+	WHERE o.type = 'V';
+
+DECLARE view_cursor CURSOR FAST_FORWARD FOR
+	SELECT object_id FROM @viewObjectIds;
+
+OPEN view_cursor;
+FETCH NEXT FROM view_cursor INTO @object_id;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	SELECT @command =
+		'EXECUTE sp_refreshview '''
+		+ QUOTENAME(OBJECT_SCHEMA_NAME(@object_id)) + '.' + QUOTENAME(OBJECT_NAME(@object_id))
+		+ ''';';
+		
+	PRINT @command;
+
+	IF @printCommandsOnly = 0
+	BEGIN
+		EXECUTE sp_executesql @command;
+	END
+
+	FETCH NEXT FROM view_cursor INTO @object_id;
+END
+
+CLOSE view_cursor;
+DEALLOCATE view_cursor;
 GO
