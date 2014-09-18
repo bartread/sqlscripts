@@ -1,5 +1,8 @@
 /*
 
+	T-SQL script to convert all NTEXT columns in a SQL Server database
+	to NVARCHAR(MAX).
+
 	Copyright © 2014 Bart Read
 	http://www.bartread.com/
 
