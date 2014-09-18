@@ -1,3 +1,10 @@
+/*
+
+	Copyright © 2014 Bart Read
+	http://www.bartread.com/
+
+*/
+
 USE _YOUR_DATABASE_NAME_
 GO
 
