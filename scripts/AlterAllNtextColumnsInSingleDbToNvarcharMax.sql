@@ -8,7 +8,7 @@
 
 */
 
-USE _YOUR_DATABASE_NAME_
+USE __YOUR_DATABASE_NAME__
 GO
 
 SET NOCOUNT ON;
@@ -30,33 +30,48 @@ DECLARE @ntextColumnInfo TABLE (
 	IsNullable BIT
 );
 
-INSERT INTO @ntextColumnInfo ( object_id, ColumnName, IsNullable )
-	SELECT  c.object_id, c.name, c.is_nullable
-	FROM    sys.columns AS c
-	INNER JOIN sys.objects AS o
-	ON c.object_id = o.object_id
-	WHERE   o.type = 'U' AND c.system_type_id = 99;
+INSERT  INTO @ntextColumnInfo
+        ( object_id ,
+          ColumnName ,
+          IsNullable
+        )
+        SELECT  c.object_id ,
+                c.name ,
+                c.is_nullable
+        FROM    sys.columns AS c
+                INNER JOIN sys.objects AS o
+				ON c.object_id = o.object_id
+        WHERE   o.type = 'U'
+                AND c.system_type_id = 99;
 
-DECLARE col_cursor CURSOR FAST_FORWARD FOR
-	SELECT object_id, ColumnName, IsNullable FROM @ntextColumnInfo;
+DECLARE col_cursor CURSOR FAST_FORWARD
+FOR
+    SELECT  object_id ,
+            ColumnName ,
+            IsNullable
+    FROM    @ntextColumnInfo;
 
 OPEN col_cursor;
-FETCH NEXT FROM col_cursor INTO @object_id, @columnName, @isNullable;
+
+FETCH NEXT FROM col_cursor
+	INTO @object_id, @columnName, @isNullable;
 
 WHILE @@FETCH_STATUS = 0
 BEGIN
-	SELECT @command =
-		'ALTER TABLE '
-		+ QUOTENAME(OBJECT_SCHEMA_NAME(@object_id))
-			+ '.' + QUOTENAME(OBJECT_NAME(@object_id))
-		+ ' ALTER COLUMN '
-		+ QUOTENAME(@columnName)
-		+' NVARCHAR(MAX) '
-		+ CASE
-			WHEN @isNullable = 1 THEN ''
-			ELSE 'NOT'
-		  END
-		+ ' NULL;';
+
+	--	Change column data type
+
+	SET @command = 'ALTER TABLE {SCHEMA}.{TABLE}
+ALTER COLUMN {COLUMN} NVARCHAR(MAX) {BLANKORNOT}NULL;';
+	SET @command =
+		REPLACE(
+		REPLACE(
+		REPLACE(
+		REPLACE(@command,
+			'{SCHEMA}', QUOTENAME(OBJECT_SCHEMA_NAME(@object_id))),
+			'{TABLE}', QUOTENAME(OBJECT_NAME(@object_id))),
+			'{COLUMN}', QUOTENAME(@columnName)),
+			'{BLANKORNOT}', CASE WHEN @isNullable = 1 THEN '' ELSE 'NOT ' END);
 		
 	PRINT @command;
 	IF @printCommandsOnly = 0
@@ -64,15 +79,16 @@ BEGIN
 		EXECUTE sp_executesql @command;
 	END
 
-	SELECT @command =
-		'UPDATE '
-		+ QUOTENAME(OBJECT_SCHEMA_NAME(@object_id))
-			+ '.' + QUOTENAME(OBJECT_NAME(@object_id))
-		+ ' SET '
-		+ QUOTENAME(@columnName)
-		+ ' = '
-		+ QUOTENAME(@columnName)
-		+ ';'
+	--	Update values in column to pull back into row
+
+	SET @command = 'UPDATE {SCHEMA}.{TABLE} SET {COLUMN} = {COLUMN};';
+	SET @command =
+		REPLACE(
+		REPLACE(
+		REPLACE(@command,
+			'{COLUMN}', QUOTENAME(@columnName)),
+			'{TABLE}', QUOTENAME(OBJECT_NAME(@object_id))),
+			'{SCHEMA}', QUOTENAME(OBJECT_SCHEMA_NAME(@object_id)));
 
 	PRINT @command;
 	IF @printCommandsOnly = 0
@@ -106,10 +122,12 @@ FETCH NEXT FROM view_cursor INTO @object_id;
 
 WHILE @@FETCH_STATUS = 0
 BEGIN
-	SELECT @command =
-		'EXECUTE sp_refreshview '''
-		+ QUOTENAME(OBJECT_SCHEMA_NAME(@object_id)) + '.' + QUOTENAME(OBJECT_NAME(@object_id))
-		+ ''';';
+	SET @command = 'EXECUTE sp_refreshview ''{SCHEMA}.{VIEW}'';';
+	SET @command =
+		REPLACE(
+		REPLACE(@command,
+			'{VIEW}', QUOTENAME(OBJECT_NAME(@object_id))),
+			'{SCHEMA}', QUOTENAME(OBJECT_SCHEMA_NAME(@object_id)));
 		
 	PRINT @command;
 
