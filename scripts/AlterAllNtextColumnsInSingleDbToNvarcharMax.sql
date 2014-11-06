@@ -44,6 +44,8 @@ INSERT  INTO @ntextColumnInfo
         WHERE   o.type = 'U'
                 AND c.system_type_id = 99;
 
+DECLARE @columnCount INT = 0;
+
 DECLARE col_cursor CURSOR FAST_FORWARD
 FOR
     SELECT  object_id ,
@@ -96,6 +98,8 @@ ALTER COLUMN {COLUMN} NVARCHAR(MAX) {BLANKORNOT}NULL;';
 		EXECUTE sp_executesql @command;
 	END
 
+	SET @columnCount = @columnCount + 1;
+
 	FETCH NEXT FROM col_cursor INTO @object_id, @columnName, @isNullable;
 END
 
@@ -105,40 +109,43 @@ DEALLOCATE col_cursor;
 -- Now refresh the view metadata for all the views in the database
 -- (We may not need to do them all but it won't hurt.)
 
-DECLARE @viewObjectIds TABLE (
-	object_id INT
-);
-
-INSERT INTO @viewObjectIds
-	SELECT o.object_id
-	FROM sys.objects AS o
-	WHERE o.type = 'V';
-
-DECLARE view_cursor CURSOR FAST_FORWARD FOR
-	SELECT object_id FROM @viewObjectIds;
-
-OPEN view_cursor;
-FETCH NEXT FROM view_cursor INTO @object_id;
-
-WHILE @@FETCH_STATUS = 0
+IF @columnCount > 0
 BEGIN
-	SET @command = 'EXECUTE sp_refreshview ''{SCHEMA}.{VIEW}'';';
-	SET @command =
-		REPLACE(
-		REPLACE(@command,
-			'{VIEW}', QUOTENAME(OBJECT_NAME(@object_id))),
-			'{SCHEMA}', QUOTENAME(OBJECT_SCHEMA_NAME(@object_id)));
-		
-	PRINT @command;
+	DECLARE @viewObjectIds TABLE (
+		object_id INT
+	);
 
-	IF @printCommandsOnly = 0
+	INSERT INTO @viewObjectIds
+		SELECT o.object_id
+		FROM sys.objects AS o
+		WHERE o.type = 'V';
+
+	DECLARE view_cursor CURSOR FAST_FORWARD FOR
+		SELECT object_id FROM @viewObjectIds;
+
+	OPEN view_cursor;
+	FETCH NEXT FROM view_cursor INTO @object_id;
+
+	WHILE @@FETCH_STATUS = 0
 	BEGIN
-		EXECUTE sp_executesql @command;
+		SET @command = 'EXECUTE sp_refreshview ''{SCHEMA}.{VIEW}'';';
+		SET @command =
+			REPLACE(
+			REPLACE(@command,
+				'{VIEW}', QUOTENAME(OBJECT_NAME(@object_id))),
+				'{SCHEMA}', QUOTENAME(OBJECT_SCHEMA_NAME(@object_id)));
+		
+		PRINT @command;
+
+		IF @printCommandsOnly = 0
+		BEGIN
+			EXECUTE sp_executesql @command;
+		END
+
+		FETCH NEXT FROM view_cursor INTO @object_id;
 	END
 
-	FETCH NEXT FROM view_cursor INTO @object_id;
+	CLOSE view_cursor;
+	DEALLOCATE view_cursor;
 END
-
-CLOSE view_cursor;
-DEALLOCATE view_cursor;
 GO
