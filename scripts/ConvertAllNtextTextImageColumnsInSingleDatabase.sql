@@ -19,6 +19,7 @@ SET NOCOUNT ON;
 
 -- Set this to 0 to actually run commands, 1 to only print them.
 DECLARE @printCommandsOnly BIT = 1;
+DECLARE @fullTextFormat NVARCHAR(MAX) = 'FT_{TABLE}_{COLUMN}';
 
 DECLARE @typesToMigrate TABLE (
 	[TypeName] SYSNAME
@@ -32,14 +33,22 @@ VALUES
 	( 'text' ),		-- Migrates to VARCHAR(MAX)
 	( 'image' );	-- Migrates to VARBINARY(MAX)
 
--- Migrate columns NTEXT -> NVARCHAR(MAX)
+DECLARE @fullTextIndexColumns TABLE (
+	[Table] int,
+	[Column] nvarchar(100),
+	[Language] int
+);
 
 DECLARE @object_id INT,
 		@columnName SYSNAME,
 		@isNullable BIT,
 		@typeName SYSNAME,
 		@columnCount INT = 0,
-		@targetDataType SYSNAME;
+		@targetDataType SYSNAME,
+		@table INT,
+		@column SYSNAME,
+		@language INT,
+		@pkName SYSNAME;
 
 DECLARE @command NVARCHAR(MAX);
 
@@ -50,7 +59,51 @@ DECLARE @lobColumnInfo TABLE (
 	TypeName SYSNAME
 );
 
-INSERT  INTO @lobColumnInfo
+INSERT INTO @fullTextIndexColumns
+SELECT
+	c.object_id AS [Table],
+	c.name AS [Name],
+	fic.language_id AS [Language]
+FROM sys.columns AS c
+INNER JOIN sys.types AS t
+	ON c.system_type_id = t.system_type_id 
+INNER JOIN sys.fulltext_index_columns fic 
+	ON c.object_id = fic.object_id 
+    AND c.column_id = fic.column_id
+WHERE 
+	t.name IN (SELECT TypeName FROM @typesToMigrate); 
+
+DECLARE fulltext_cursor CURSOR FAST_FORWARD
+FOR
+    SELECT  [Table],
+			[Column],
+			[Language]
+    FROM    @fullTextIndexColumns;
+
+OPEN fulltext_cursor;
+
+FETCH NEXT FROM fulltext_cursor
+	INTO @table, @column, @language;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	SET @command = 'DROP FULLTEXT INDEX ON {SCHEMA}.{TABLE}'
+	SET @command =
+		REPLACE(
+		REPLACE(@command,
+			'{SCHEMA}', QUOTENAME(OBJECT_SCHEMA_NAME(@table))),
+			'{TABLE}', QUOTENAME(OBJECT_NAME(@table)))
+	PRINT @command;
+	IF @printCommandsOnly = 0
+	BEGIN
+		EXECUTE sp_executesql @command;
+	END;
+	FETCH NEXT FROM fulltext_cursor
+		INTO @table, @column, @language;
+END
+
+CLOSE fulltext_cursor;
+
+INSERT INTO @lobColumnInfo
         ( object_id,
           ColumnName,
           IsNullable,
@@ -176,5 +229,44 @@ BEGIN
 
 	CLOSE view_cursor;
 	DEALLOCATE view_cursor;
+
+	OPEN fulltext_cursor;
+
+FETCH NEXT FROM fulltext_cursor
+	INTO @table, @column, @language;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+	SET @command = 'CREATE FULLTEXT INDEX ON [{SCHEMA}].[{TABLE}] ([{COLUMN}]
+		Language {LANGUAGE}) KEY INDEX {PK} ON ' + @fullTextFormat
+	SET @pkName = (
+		SELECT tc.CONSTRAINT_NAME
+			FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+			INNER JOIN INFORMATION_SCHEMA.CONSTRAINT_COLUMN_USAGE ccu
+				ON tc.CONSTRAINT_NAME = ccu.Constraint_name
+			WHERE tc.TABLE_SCHEMA = OBJECT_SCHEMA_NAME(@table)
+				AND tc.TABLE_NAME = OBJECT_NAME(@table)
+				AND tc.CONSTRAINT_TYPE = 'Primary Key')
+	SET @command =
+		REPLACE(
+		REPLACE(
+		REPLACE(
+		REPLACE(
+		REPLACE(@command,
+			'{SCHEMA}', OBJECT_SCHEMA_NAME(@table)),
+			'{TABLE}', OBJECT_NAME(@table)),
+			'{COLUMN}', @column),
+			'{LANGUAGE}', @language),
+			'{PK}', @pkName)
+	PRINT @command;
+	IF @printCommandsOnly = 0
+	BEGIN
+		EXECUTE sp_executesql @command;
+	END;
+	FETCH NEXT FROM fulltext_cursor
+		INTO @table, @column, @language;
+END
+
+CLOSE fulltext_cursor;
+DEALLOCATE fulltext_cursor;
 END
 GO
