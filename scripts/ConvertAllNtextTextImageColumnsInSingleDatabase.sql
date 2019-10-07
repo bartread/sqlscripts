@@ -6,7 +6,7 @@
 	TEXT -> VARCHAR(MAX)
 	IMAGE -> VARBINARY(MAX)
 
-	Copyright © 2014 Bart Read
+	Copyright ï¿½ 2014 Bart Read
 	http://www.bartread.com/
 
 */
@@ -137,9 +137,6 @@ END
 
 CLOSE col_cursor;
 DEALLOCATE col_cursor;
-
--- Now refresh the view metadata for all the views in the database
--- (We may not need to do them all but it won't hurt.)
 
 IF @columnCount > 0
 BEGIN
